@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "/home/immersive/.local/lib/python3.10/site-packages/nnunetv2"
+		}
+	],
+	"settings": {}
+}
