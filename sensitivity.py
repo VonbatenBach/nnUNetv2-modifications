@@ -57,7 +57,7 @@ class DC_and_TPR_loss(nn.Module):
     def __init__(self, apply_nonlin: Callable = None, batch_dice: bool = False, do_bg: bool = True, smooth: float = 1.,
                  ddp: bool = True, clip_tp: float = None):
 
-        super(SensitivityLoss, self).__init__()
+        super(DC_and_TPR_loss, self).__init__()
 
         self.do_bg = do_bg
         self.batch_dice = batch_dice
@@ -87,33 +87,82 @@ class DC_and_TPR_loss(nn.Module):
         if self.clip_tp is not None:
             tp = torch.clip(tp, min=self.clip_tp , max=None)
 
-        nominator = tp
-        denominator = tp + fn
-
         # TPR (true positivity rate) = sensitivity = recall
-        tpr = (nominator + self.smooth) / (torch.clip(denominator + self.smooth, 1e-8))
+        tpr = (tp + self.smooth) / (torch.clip(tp + fn + self.smooth, 1e-8))
+
+        dc = (2 * tp + self.smooth) / (torch.clip(2 * tp + fp + fn + self.smooth, 1e-8))
 
         if not self.do_bg:
             if self.batch_dice:
                 tpr = tpr[1:]
-            else:
-                tpr = tpr[:, 1:]
-        tpr = tpr.mean()
-
-        nominator = 2 * tp
-        denominator = 2 * tp + fp + fn
-
-        dc = (nominator + self.smooth) / (torch.clip(denominator + self.smooth, 1e-8))
-
-        if not self.do_bg:
-            if self.batch_dice:
                 dc = dc[1:]
             else:
+                tpr = tpr[:, 1:]
                 dc = dc[:, 1:]
+        tpr = tpr.mean()
         dc = dc.mean()
 
-        return -tpr-dc
+        return 1-tpr-dc
 
+class MemoryEfficientSoftDiceLossAndTPR(nn.Module):
+    def __init__(self, apply_nonlin: Callable = None, batch_dice: bool = False, do_bg: bool = True, smooth: float = 1.,
+                 ddp: bool = True):
+
+        super(MemoryEfficientSoftDiceLossAndTPR, self).__init__()
+
+        self.do_bg = do_bg
+        self.batch_dice = batch_dice
+        self.apply_nonlin = apply_nonlin
+        self.smooth = smooth
+        self.ddp = ddp
+
+    def forward(self, x, y, loss_mask=None):
+        shp_x, shp_y = x.shape, y.shape
+
+        if self.apply_nonlin is not None:
+            x = self.apply_nonlin(x)
+
+        if not self.do_bg:
+            x = x[:, 1:]
+
+        # make everything shape (b, c)
+        axes = list(range(2, len(shp_x)))
+
+        with torch.no_grad():
+            if len(shp_x) != len(shp_y):
+                y = y.view((shp_y[0], 1, *shp_y[1:]))
+
+            if all([i == j for i, j in zip(shp_x, shp_y)]):
+                # if this is the case then gt is probably already a one hot encoding
+                y_onehot = y
+            else:
+                gt = y.long()
+                y_onehot = torch.zeros(shp_x, device=x.device, dtype=torch.bool)
+                y_onehot.scatter_(1, gt, 1)
+
+            if not self.do_bg:
+                y_onehot = y_onehot[:, 1:]
+            sum_gt = y_onehot.sum(axes) if loss_mask is None else (y_onehot * loss_mask).sum(axes)
+
+        intersect = (x * y_onehot).sum(axes) if loss_mask is None else (x * y_onehot * loss_mask).sum(axes)
+        sum_pred = (x * x).sum(axes) if loss_mask is None else (x * x * loss_mask).sum(axes)
+
+        if self.ddp and self.batch_dice:
+            intersect = AllGatherGrad.apply(intersect).sum(0)
+            sum_pred = AllGatherGrad.apply(sum_pred).sum(0)
+            sum_gt = AllGatherGrad.apply(sum_gt).sum(0)
+
+        if self.batch_dice:
+            intersect = intersect.sum(0)
+            sum_pred = sum_pred.sum(0)
+            sum_gt = sum_gt.sum(0)
+
+        dc = (2 * intersect + self.smooth) / (torch.clip(sum_gt + sum_pred + self.smooth, 1e-8))
+        tpr = (intersect + self.smooth) / (torch.clip(sum_gt + self.smooth, 1e-8))
+
+        dc = dc.mean()
+        tpr = tpr.mean()
+        return -dc - 0.05*tpr
 
 
 def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):

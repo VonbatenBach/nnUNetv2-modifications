@@ -191,7 +191,7 @@ class nnUNetDataLoaderBase(DataLoader):
             voxels_of_that_class = class_locations[selected_class] if selected_class is not None else None
             if selected_class in eligible_classes_or_regions_in_data:
                 voxels_coming_from_data_layer = class_locations_data[selected_class] if selected_class is not None else None
-            voxels_of_that_class = np.vstack((voxels_of_that_class,voxels_coming_from_data_layer))
+                voxels_of_that_class = np.vstack((voxels_of_that_class,voxels_coming_from_data_layer))
 
             if voxels_of_that_class is not None and len(voxels_of_that_class) > 0:
                 selected_voxel = voxels_of_that_class[np.random.choice(len(voxels_of_that_class))]

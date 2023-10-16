@@ -86,15 +86,6 @@ class DefaultPreprocessor(object):
         if self.verbose:
             print(f'old shape: {old_shape}, new_shape: {new_shape}, old_spacing: {original_spacing}, '
                   f'new_spacing: {target_spacing}, fn_data: {configuration_manager.resampling_fn_data}')
-            
-        ### Here comes custom modification to allow taking segmentation from previous stage,
-        # from the last channel of the data file ###
-        last_layer_data = data[-1].astype(np.int16)
-        last_layer_data = np.expand_dims(last_layer_data, axis=0)
-
-        properties['class_locations_from_last_data_channel'] = self._sample_foreground_locations(last_layer_data,
-                                                                collect_for_this, verbose=self.verbose)
-        ### END OF MODIFICATIONS ### 
 
         # if we have a segmentation, sample foreground locations for oversampling and add those to properties
         if has_seg:
@@ -115,6 +106,16 @@ class DefaultPreprocessor(object):
             properties['class_locations'] = self._sample_foreground_locations(seg, collect_for_this,
                                                                                    verbose=self.verbose)
             seg = self.modify_seg_fn(seg, plans_manager, dataset_json, configuration_manager)
+
+            ### Here comes custom modification to allow taking segmentation from previous stage,
+            # from the last channel of the data file ###
+            last_layer_data = data[-1].astype(np.int16)
+            last_layer_data = np.expand_dims(last_layer_data, axis=0)
+            
+            properties['class_locations_from_last_data_channel'] = self._sample_foreground_locations(last_layer_data,
+                                                                collect_for_this, verbose=self.verbose)
+            ### END OF MODIFICATIONS ### 
+            
         if np.max(seg) > 127:
             seg = seg.astype(np.int16)
         else:
